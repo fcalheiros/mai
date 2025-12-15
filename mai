@@ -1,10 +1,17 @@
 #!/bin/bash
 
+# ====================================================================
+# mai.sh - MyAI - Command-line script to interact with the Gemini API
+# Version 0.2
+# ====================================================================
+
 # Default configurations
+VERSION="0.2"
 API_KEY=""
-URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+MODEL="gemini-2.5-flash-lite" 
+URL="https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent"
 OUTPUT_DIR="$HOME/maiout"
-VERSION="0.1"
+CONTENT_TYPE="application/json"
 
 # Configuration directories and files
 CONFIG_DIR="$HOME/.local/.mai"
@@ -12,194 +19,219 @@ CONFIG_FILE="$CONFIG_DIR/mai.conf"
 HISTORY_FILE="$CONFIG_DIR/history.json"
 LOG_FILE="$OUTPUT_DIR/mai.log"
 
-# Function to create the configuration file
-create_config() {
-  mkdir -p "$CONFIG_DIR"
-  echo "Enter your API key:"
-  read API_KEY
-  echo "API_KEY=$API_KEY" > "$CONFIG_FILE"
-  echo "URL=$URL" >> "$CONFIG_FILE"
-  echo "OUTPUT_DIR=$HOME/maiout" >> "$CONFIG_FILE"
+# Function to check dependencies (jq and curl)
+check_dependencies() {
+    if ! command -v jq &> /dev/null || ! command -v curl &> /dev/null; then
+        echo "Critical Error: This script requires 'jq' and 'curl' to be installed."
+        echo "Please install them and try again."
+        exit 1
+    fi
 }
 
-# Check if the configuration file exists
-if [ ! -f "$CONFIG_FILE" ]; then
-  create_config
-fi
+# Executes the check at the start
+check_dependencies
+
+# Function to create the configuration file
+create_config() {
+    mkdir -p "$CONFIG_DIR"
+    echo "Enter your Gemini API key:"
+    read API_KEY
+    echo "API_KEY=$API_KEY" > "$CONFIG_FILE"
+    echo "URL=$URL" >> "$CONFIG_FILE"
+    echo "OUTPUT_DIR=$HOME/maiout" >> "$CONFIG_FILE"
+    echo "Configuration file created at $CONFIG_FILE"
+}
 
 # Function to read configurations from mai.conf
 read_config() {
-  while IFS='=' read -r key value; do
-    case "$key" in
-      API_KEY) API_KEY="$value" ;;
-      URL) URL="$value" ;;
-      OUTPUT_DIR) OUTPUT_DIR="$value" ;;
-    esac
-  done < "$CONFIG_FILE"
+    while IFS='=' read -r key value; do
+        case "$key" in
+            API_KEY) API_KEY="$value" ;;
+            URL) URL="$value" ;;
+            OUTPUT_DIR) OUTPUT_DIR="$value" ;;
+        esac
+    done < "$CONFIG_FILE"
 }
 
-# Read configurations
-read_config
-
-# Check if API_KEY is configured
-if [ -z "$API_KEY" ]; then
-  echo "Error: API_KEY not configured in $CONFIG_FILE"
-  exit 1
+# Checks and creates the configuration file if necessary
+if [ ! -f "$CONFIG_FILE" ]; then
+    create_config
 fi
 
-# Function to display help message
+# Reads configurations
+read_config
+
+# Checks if API_KEY is configured
+if [ -z "$API_KEY" ]; then
+    echo "Error: API_KEY not configured in $CONFIG_FILE"
+    exit 1
+fi
+
+# Function to display the help message
 show_help() {
-  echo "Usage: $0 \"your text here\" [file] [options]"
-  echo ""
-  echo "Options:"
-  echo "  --debug     Display debug information."
-  echo "  --new, -n   Start a new conversation, clearing history."
-  echo "  --help, -h  Display this help message."
-  echo "  --version   Display script version."
-  echo "  --config    Edit the configuration file."
-  echo "  --log       Enable log recording."
-  exit 0
+    echo "Usage: $0 \"your text here\" [file] [options]"
+    echo ""
+    echo "Options:"
+    echo "  --debug         Displays debug information in the $OUTPUT_DIR/debug.log file."
+    echo "  --new, -n       Starts a new conversation, clearing the history."
+    echo "  --help, -h      Displays this help message."
+    echo "  --version       Displays the script version."
+    echo "  --config        Edits the configuration file (requires editor)."
+    echo "  --log           Enables logging to the $LOG_FILE file."
+    exit 0
 }
 
 # Function to edit the configuration file
 edit_config() {
-  if [ -f "$CONFIG_FILE" ]; then
-    echo "Opening configuration file..."
-    ${EDITOR:-nano} "$CONFIG_FILE" # Opens default editor or nano
-    if [ $? -eq 0 ]; then
-      echo "Configuration file saved."
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "Opening configuration file..."
+        ${EDITOR:-nano} "$CONFIG_FILE" # Opens the default editor or nano
+        if [ $? -eq 0 ]; then
+            echo "Configuration file saved."
+        else
+            echo "Error editing the configuration file."
+        fi
     else
-      echo "Error editing configuration file."
+        echo "Configuration file not found. Run the script first to create it."
     fi
-  else
-    echo "Configuration file not found. Run the script first to create it."
-  fi
 }
 
-# Check if --version option was provided
-if [ "$1" == "--version" ]; then
-  echo "mai version: $VERSION"
-  exit 0
-fi
-
-# Check for --debug, --new, and --help options
+# Checks command line options
 DEBUG_MODE=false
 NEW_CONVERSATION=false
 ENABLE_LOG=false
 ARGS=()
 for arg in "$@"; do
-  if [ "$arg" == "--debug" ]; then
-    DEBUG_MODE=true
-  elif [ "$arg" == "--new" ] || [ "$arg" == "-n" ]; then
-    NEW_CONVERSATION=true
-  elif [ "$arg" == "--help" ] || [ "$arg" == "-h" ]; then
-    show_help
-  elif [ "$arg" == "--config" ]; then
-    edit_config
-    exit 0
-  elif [ "$arg" == "--log" ]; then
-    ENABLE_LOG=true
-  else
-    ARGS+=("$arg")
-  fi
+    if [ "$arg" == "--debug" ]; then
+        DEBUG_MODE=true
+    elif [ "$arg" == "--new" ] || [ "$arg" == "-n" ]; then
+        NEW_CONVERSATION=true
+    elif [ "$arg" == "--help" ] || [ "$arg" == "-h" ]; then
+        show_help
+    elif [ "$arg" == "--version" ]; then
+        echo "mai version: $VERSION"
+        exit 0
+    elif [ "$arg" == "--config" ]; then
+        edit_config
+        exit 0
+    elif [ "$arg" == "--log" ]; then
+        ENABLE_LOG=true
+    else
+        ARGS+=("$arg")
+    fi
 done
 
-# Clear history if --new option is provided
+# Clears history if the --new option is provided
 if $NEW_CONVERSATION; then
-  echo "[]" > "$HISTORY_FILE"
-  echo "New conversation started."
+    echo "[]" > "$HISTORY_FILE"
+    echo "New conversation started."
 fi
 
-# Check if text was provided as argument
+# Checks if text was provided as an argument
 if [ -z "${ARGS[0]}" ]; then
-  if $NEW_CONVERSATION; then
-    exit 0 # If --new, and no text, exit after clearing history.
-  else
-    show_help # Display help message if no text is provided.
-  fi
+    if $NEW_CONVERSATION; then
+        exit 0 # If --new, and no text, exits after clearing history.
+    else
+        show_help # Displays help message if no text is provided.
+    fi
 fi
 
 TEXT="${ARGS[0]}"
 FILE="${ARGS[1]}"
 
-# Create output directory if it doesn't exist
+# Creates the output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Function to read conversation history
+# Function to read the conversation history
 read_history() {
-  if [ -f "$HISTORY_FILE" ] && ! $NEW_CONVERSATION; then # Don't read history if --new
-    cat "$HISTORY_FILE"
-  else
-    echo "[]" # Return empty array if file doesn't exist or --new
-  fi
+    if [ -f "$HISTORY_FILE" ] && ! $NEW_CONVERSATION; then # Does not read history if --new
+        cat "$HISTORY_FILE"
+    else
+        echo "[]" # Returns empty array if file does not exist or --new
+    fi
 }
 
-# Assemble JSON request body
-if [ -n "$FILE" ]; then
-  # If a file was provided, encode it in base64
-  MIME_TYPE=$(file -b --mime-type "$FILE")
-  BASE64_DATA=$(base64 -w 0 "$FILE")
+# Reads history
+HISTORY=$(read_history)
 
-  HISTORY=$(read_history)
-  DATA=$(cat <<EOF
+# JSON body assembly
+if [ -n "$FILE" ]; then
+    # If a file was provided, encode it in base64
+    MIME_TYPE=$(file -b --mime-type "$FILE")
+    BASE64_DATA=$(base64 -w 0 "$FILE")
+
+    DATA=$(cat <<EOF
 {
-  "contents": $(echo "$HISTORY" | jq --arg text "$TEXT" --arg mimeType "$MIME_TYPE" --arg data "$BASE64_DATA" '. + [{"role": "user", "parts": [{"text": $text}, {"inlineData": {"mimeType": $mimeType, "data": $data}}]}]')
+    "contents": $(echo "$HISTORY" | jq --arg text "$TEXT" --arg mimeType "$MIME_TYPE" --arg data "$BASE64_DATA" '. + [{"role": "user", "parts": [{"text": $text}, {"inlineData": {"mimeType": $mimeType, "data": $data}}]}]')
 }
 EOF
 )
 else
-  # If no file was provided, send only the text
-  HISTORY=$(read_history)
-  DATA=$(cat <<EOF
+    # If no file was provided, send only the text
+    DATA=$(cat <<EOF
 {
-  "contents": $(echo "$HISTORY" | jq --arg text "$TEXT" '. + [{"role": "user", "parts": [{"text": $text}]}]')
+    "contents": $(echo "$HISTORY" | jq --arg text "$TEXT" '. + [{"role": "user", "parts": [{"text": $text}]}]')
 }
 EOF
 )
 fi
 
-# Assemble complete request
-REQUEST_COMMAND="curl -s -X POST -H \"Content-Type: ${CONTENT_TYPE}\" -d '${DATA}' \"${URL}?key=${API_KEY}\""
-
-# Make the request
-RESPONSE=$(eval "${REQUEST_COMMAND}")
+# Request Execution
+RESPONSE=$(echo "$DATA" | curl -s -X POST \
+  -H "Content-Type: ${CONTENT_TYPE}" \
+  -d @- \
+  "${URL}?key=${API_KEY}")
 
 # Debug mode
 if $DEBUG_MODE; then
-  echo "Request:" > "$OUTPUT_DIR/debug.log"
-  echo "$REQUEST_COMMAND" >> "$OUTPUT_DIR/debug.log"
-  echo "" >> "$OUTPUT_DIR/debug.log"
-  echo "Full response:" >> "$OUTPUT_DIR/debug.log"
-  echo "$RESPONSE" >> "$OUTPUT_DIR/debug.log"
-  echo "Full response saved to: $OUTPUT_DIR/debug.log"
+    echo "--- Request ---" > "$OUTPUT_DIR/debug.log"
+    echo "$DATA" >> "$OUTPUT_DIR/debug.log"
+    echo "" >> "$OUTPUT_DIR/debug.log"
+    echo "--- Full Response ---" >> "$OUTPUT_DIR/debug.log"
+    echo "$RESPONSE" >> "$OUTPUT_DIR/debug.log"
+    echo "Full response saved in: $OUTPUT_DIR/debug.log"
 fi
 
-# Extract text and files with jq
-TEXT_RESPONSE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.text) | .text')
-FILES=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.inlineData) | .inlineData')
+# Extracts text and files with jq
+if echo "$RESPONSE" | jq -e '.candidates' >/dev/null; then
+    TEXT_RESPONSE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.text) | .text')
+    FILES=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.inlineData) | .inlineData')
+else
+	echo "Response "
+    echo "Error: Response does not contain candidates."
+    echo "Possible causes: Wrong API Key, invalid Model, or rate limit reached."
+    echo "See the exact error in the debug file."
+    TEXT_RESPONSE=""
+    FILES=""
+fi
 
-# Display the text
-echo "${TEXT_RESPONSE}"
+# Displays the text
+if [ -n "$TEXT_RESPONSE" ]; then
+    echo "$TEXT_RESPONSE"
+fi
 
-# Process files
+# Processes files (Image generation or other binary data)
 if [ -n "$FILES" ]; then
-  while IFS= read -r FILE_DATA; do
-    MIME_TYPE=$(echo "$FILE_DATA" | jq -r '.mimeType')
-    BASE64_DATA=$(echo "$FILE_DATA" | jq -r '.data')
-    EXT=$(echo "$MIME_TYPE" | sed 's/.*\///') # Extract extension from MIME type
-    OUTPUT_FILE="$OUTPUT_DIR/output_$(date +%s).$EXT" # Generate unique file name
-    echo "$BASE64_DATA" | base64 -d > "$OUTPUT_FILE"
-    echo "File saved: $OUTPUT_FILE"
-  done <<< "$FILES"
+    while IFS= read -r FILE_DATA; do
+        MIME_TYPE=$(echo "$FILE_DATA" | jq -r '.mimeType')
+        BASE64_DATA=$(echo "$FILE_DATA" | jq -r '.data')
+        EXT=$(echo "$MIME_TYPE" | sed 's/.*\///') # Extracts extension from MIME type
+        OUTPUT_FILE="$OUTPUT_DIR/output_$(date +%s).$EXT" # Generates unique file name
+        echo "$BASE64_DATA" | base64 -d > "$OUTPUT_FILE"
+        echo "File saved: $OUTPUT_FILE (MIME: $MIME_TYPE)"
+    done <<< "$FILES"
 fi
 
-# Save updated history
-if ! $NEW_CONVERSATION; then # Don't save history if --new
-  echo "$(echo "$HISTORY" | jq --arg text "$TEXT" --arg response "$TEXT_RESPONSE" '. + [{"role": "user", "parts": [{"text": $text}]}, {"role": "model", "parts": [{"text": $response}]}]')" > "$HISTORY_FILE"
+# Saves the updated history
+if ! $NEW_CONVERSATION; then
+    # Ensures that even if the response is empty, the conversation is logged.
+    CLEAN_TEXT_RESPONSE=$(echo "$TEXT_RESPONSE" | jq -Rs .)
+    echo "$(echo "$HISTORY" | jq --arg text "$TEXT" --argjson response "$CLEAN_TEXT_RESPONSE" '. + [{"role": "user", "parts": [{"text": $text}]}, {"role": "model", "parts": [{"text": $response}]}]')" > "$HISTORY_FILE"
 fi
 
-# Log recording
+# Logging
 if $ENABLE_LOG; then
-  echo "$(date): $TEXT -> $TEXT_RESPONSE" >> "$LOG_FILE"
+    # Removes new lines from the response for a clean log entry
+    CLEAN_LOG_RESPONSE=$(echo "$TEXT_RESPONSE" | tr -d '\n\r')
+    echo "$(date): $TEXT -> $CLEAN_LOG_RESPONSE" >> "$LOG_FILE"
 fi
-
