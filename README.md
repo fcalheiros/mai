@@ -1,6 +1,6 @@
-# mai - Command-Line Interface for Gemini 2.0 Flash API
+# mai - Command-Line Interface for Gemini API
 
-`mai` is a shell script that allows you to interact with the Google Gemini 2.0 Flash API directly from the command line. It supports sending text and files (like images) and receiving text and files as a response.
+`mai` is a shell script that allows you to interact with the Google Gemini API directly from the command line. It supports sending text and files (like images) and receiving text and files as a response.
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ Before using `mai`, ensure you have the following utilities installed on your sy
 
 ## Obtaining the API Key
 
-To use the Gemini 2.0 Flash API, you'll need a Google Cloud API key. Follow these steps to obtain it:
+To use the Gemini API, you'll need a Google Cloud API key. Follow these steps to obtain it:
 
 1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
 2.  Create a new project or select an existing one.
