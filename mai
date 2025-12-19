@@ -239,16 +239,19 @@ if [ -n "$FILES" ]; then
 fi
 
 # ---------------------------------------------------------
-# Save history
+# Save history (FIXED: no --argjson)
 # ---------------------------------------------------------
-if ! $NEW_CONVERSATION; then
-    CLEAN_TEXT_RESPONSE=$(echo "$TEXT_RESPONSE" | jq -Rs .)
-    NEW_HISTORY=$(echo "$HISTORY" | jq \
-        --arg text "$TEXT" \
-        --argjson resp "$CLEAN_TEXT_RESPONSE" \
-        '. + [{"role":"user","parts":[{"text":$text}]},{"role":"model","parts":[{"text":$resp}]}]')
-    echo "$NEW_HISTORY" > "$HISTORY_FILE"
-fi
+CLEAN_TEXT_RESPONSE=$(echo "$TEXT_RESPONSE" | jq -Rs .)
+
+NEW_HISTORY=$(echo "$HISTORY" | jq \
+    --arg text "$TEXT" \
+    --arg response "$CLEAN_TEXT_RESPONSE" \
+    '. + [
+        {"role":"user","parts":[{"text":$text}]},
+        {"role":"model","parts":[{"text":$response}]}
+    ]')
+
+echo "$NEW_HISTORY" > "$HISTORY_FILE"
 
 # ---------------------------------------------------------
 # Automatic logging
