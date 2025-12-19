@@ -2,47 +2,55 @@
 
 # ====================================================================
 # mai.sh - MyAI - Command-line script to interact with the Gemini API
-# Version 0.2
+# Version 0.3
 # ====================================================================
 
-# Default configurations
-VERSION="0.2"
+VERSION="0.3"
 API_KEY=""
-MODEL="gemini-2.5-flash-lite" 
-URL="https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent"
+URL=""
 OUTPUT_DIR="$HOME/maiout"
 CONTENT_TYPE="application/json"
 
-# Configuration directories and files
 CONFIG_DIR="$HOME/.local/.mai"
 CONFIG_FILE="$CONFIG_DIR/mai.conf"
 HISTORY_FILE="$CONFIG_DIR/history.json"
 LOG_FILE="$OUTPUT_DIR/mai.log"
 
-# Function to check dependencies (jq and curl)
+# ---------------------------------------------------------
+# Dependency check
+# ---------------------------------------------------------
 check_dependencies() {
     if ! command -v jq &> /dev/null || ! command -v curl &> /dev/null; then
         echo "Critical Error: This script requires 'jq' and 'curl' to be installed."
-        echo "Please install them and try again."
         exit 1
     fi
 }
-
-# Executes the check at the start
 check_dependencies
 
-# Function to create the configuration file
+# ---------------------------------------------------------
+# Create configuration
+# ---------------------------------------------------------
 create_config() {
     mkdir -p "$CONFIG_DIR"
-    echo "Enter your Gemini API key:"
+
+    echo "Enter your Gemini/Gemma API key:"
     read API_KEY
+
+    echo "Enter the model you want to use (e.g., gemini-2.5-flash-lite, gemma-3-27b-it):"
+    read MODEL
+
+    URL="https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent"
+
     echo "API_KEY=$API_KEY" > "$CONFIG_FILE"
     echo "URL=$URL" >> "$CONFIG_FILE"
     echo "OUTPUT_DIR=$HOME/maiout" >> "$CONFIG_FILE"
+
     echo "Configuration file created at $CONFIG_FILE"
 }
 
-# Function to read configurations from mai.conf
+# ---------------------------------------------------------
+# Read configuration
+# ---------------------------------------------------------
 read_config() {
     while IFS='=' read -r key value; do
         case "$key" in
@@ -53,185 +61,207 @@ read_config() {
     done < "$CONFIG_FILE"
 }
 
-# Checks and creates the configuration file if necessary
 if [ ! -f "$CONFIG_FILE" ]; then
     create_config
 fi
 
-# Reads configurations
 read_config
 
-# Checks if API_KEY is configured
 if [ -z "$API_KEY" ]; then
     echo "Error: API_KEY not configured in $CONFIG_FILE"
     exit 1
 fi
 
-# Function to display the help message
+# ---------------------------------------------------------
+# Help
+# ---------------------------------------------------------
 show_help() {
     echo "Usage: $0 \"your text here\" [file] [options]"
     echo ""
     echo "Options:"
-    echo "  --debug         Displays debug information in the $OUTPUT_DIR/debug.log file."
-    echo "  --new, -n       Starts a new conversation, clearing the history."
-    echo "  --help, -h      Displays this help message."
-    echo "  --version       Displays the script version."
-    echo "  --config        Edits the configuration file (requires editor)."
-    echo "  --log           Enables logging to the $LOG_FILE file."
+    echo "  --debug         Save debug info to $OUTPUT_DIR/debug.log"
+    echo "  --new, -n       Start a new conversation"
+    echo "  --help, -h      Show help"
+    echo "  --version       Show version"
+    echo "  --config        Edit configuration"
+    echo "  --list-models   List available Gemini/Gemma models"
+    echo "  --logs          Show the mai.log file"
     exit 0
 }
 
-# Function to edit the configuration file
 edit_config() {
-    if [ -f "$CONFIG_FILE" ]; then
-        echo "Opening configuration file..."
-        ${EDITOR:-nano} "$CONFIG_FILE" # Opens the default editor or nano
-        if [ $? -eq 0 ]; then
-            echo "Configuration file saved."
-        else
-            echo "Error editing the configuration file."
-        fi
-    else
-        echo "Configuration file not found. Run the script first to create it."
-    fi
+    ${EDITOR:-nano} "$CONFIG_FILE"
 }
 
-# Checks command line options
+# ---------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------
 DEBUG_MODE=false
 NEW_CONVERSATION=false
-ENABLE_LOG=false
+SHOW_LOGS=false
+LIST_MODELS=false
 ARGS=()
+
 for arg in "$@"; do
-    if [ "$arg" == "--debug" ]; then
-        DEBUG_MODE=true
-    elif [ "$arg" == "--new" ] || [ "$arg" == "-n" ]; then
-        NEW_CONVERSATION=true
-    elif [ "$arg" == "--help" ] || [ "$arg" == "-h" ]; then
-        show_help
-    elif [ "$arg" == "--version" ]; then
-        echo "mai version: $VERSION"
-        exit 0
-    elif [ "$arg" == "--config" ]; then
-        edit_config
-        exit 0
-    elif [ "$arg" == "--log" ]; then
-        ENABLE_LOG=true
-    else
-        ARGS+=("$arg")
-    fi
+    case "$arg" in
+        --debug) DEBUG_MODE=true ;;
+        --new|-n) NEW_CONVERSATION=true ;;
+        --help|-h) show_help ;;
+        --version) echo "mai version: $VERSION"; exit 0 ;;
+        --config) edit_config; exit 0 ;;
+        --list-models) LIST_MODELS=true ;;
+        --logs) SHOW_LOGS=true ;;
+        *) ARGS+=("$arg") ;;
+    esac
 done
 
-# Clears history if the --new option is provided
+# ---------------------------------------------------------
+# List models
+# ---------------------------------------------------------
+list_models() {
+    echo "Fetching available Gemini/Gemma models..."
+    curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}" \
+        | jq -r '.models[].name | sub("^models/"; "")'
+    exit 0
+}
+
+if $LIST_MODELS; then
+    list_models
+fi
+
+# ---------------------------------------------------------
+# Show logs
+# ---------------------------------------------------------
+show_logs() {
+    if [ ! -f "$LOG_FILE" ]; then
+        echo "No logs found at $LOG_FILE"
+        exit 0
+    fi
+
+    echo "=== MAI LOGS ==="
+    cat "$LOG_FILE"
+    exit 0
+}
+
+if $SHOW_LOGS; then
+    show_logs
+fi
+
+# ---------------------------------------------------------
+# New conversation
+# ---------------------------------------------------------
 if $NEW_CONVERSATION; then
     echo "[]" > "$HISTORY_FILE"
     echo "New conversation started."
 fi
 
-# Checks if text was provided as an argument
 if [ -z "${ARGS[0]}" ]; then
-    if $NEW_CONVERSATION; then
-        exit 0 # If --new, and no text, exits after clearing history.
-    else
-        show_help # Displays help message if no text is provided.
-    fi
+    show_help
 fi
 
 TEXT="${ARGS[0]}"
 FILE="${ARGS[1]}"
 
-# Creates the output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
 
-# Function to read the conversation history
+# ---------------------------------------------------------
+# Read history
+# ---------------------------------------------------------
 read_history() {
-    if [ -f "$HISTORY_FILE" ] && ! $NEW_CONVERSATION; then # Does not read history if --new
+    if [ -f "$HISTORY_FILE" ] && ! $NEW_CONVERSATION; then
         cat "$HISTORY_FILE"
     else
-        echo "[]" # Returns empty array if file does not exist or --new
+        echo "[]"
     fi
 }
 
-# Reads history
 HISTORY=$(read_history)
 
-# JSON body assembly
+# ---------------------------------------------------------
+# Build JSON (safe for large data)
+# ---------------------------------------------------------
 if [ -n "$FILE" ]; then
-    # If a file was provided, encode it in base64
     MIME_TYPE=$(file -b --mime-type "$FILE")
     BASE64_DATA=$(base64 -w 0 "$FILE")
 
-    DATA=$(cat <<EOF
-{
-    "contents": $(echo "$HISTORY" | jq --arg text "$TEXT" --arg mimeType "$MIME_TYPE" --arg data "$BASE64_DATA" '. + [{"role": "user", "parts": [{"text": $text}, {"inlineData": {"mimeType": $mimeType, "data": $data}}]}]')
-}
-EOF
-)
+    CONTENTS=$(echo "$HISTORY" | jq \
+        --arg text "$TEXT" \
+        --arg mime "$MIME_TYPE" \
+        --arg data "$BASE64_DATA" \
+        '. + [{"role":"user","parts":[{"text":$text},{"inlineData":{"mimeType":$mime,"data":$data}}]}]')
 else
-    # If no file was provided, send only the text
-    DATA=$(cat <<EOF
-{
-    "contents": $(echo "$HISTORY" | jq --arg text "$TEXT" '. + [{"role": "user", "parts": [{"text": $text}]}]')
-}
-EOF
-)
+    CONTENTS=$(echo "$HISTORY" | jq \
+        --arg text "$TEXT" \
+        '. + [{"role":"user","parts":[{"text":$text}]}]')
 fi
 
-# Request Execution
+DATA=$(jq -n --argjson c "$CONTENTS" '{contents: $c}')
+
+# ---------------------------------------------------------
+# API Request
+# ---------------------------------------------------------
 RESPONSE=$(echo "$DATA" | curl -s -X POST \
   -H "Content-Type: ${CONTENT_TYPE}" \
   -d @- \
   "${URL}?key=${API_KEY}")
 
-# Debug mode
 if $DEBUG_MODE; then
     echo "--- Request ---" > "$OUTPUT_DIR/debug.log"
     echo "$DATA" >> "$OUTPUT_DIR/debug.log"
-    echo "" >> "$OUTPUT_DIR/debug.log"
-    echo "--- Full Response ---" >> "$OUTPUT_DIR/debug.log"
+    echo "--- Response ---" >> "$OUTPUT_DIR/debug.log"
     echo "$RESPONSE" >> "$OUTPUT_DIR/debug.log"
-    echo "Full response saved in: $OUTPUT_DIR/debug.log"
 fi
 
-# Extracts text and files with jq
-if echo "$RESPONSE" | jq -e '.candidates' >/dev/null; then
-    TEXT_RESPONSE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.text) | .text')
-    FILES=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.inlineData) | .inlineData')
-else
-	echo "Response "
+# ---------------------------------------------------------
+# Parse response
+# ---------------------------------------------------------
+if ! echo "$RESPONSE" | jq -e '.candidates' >/dev/null; then
     echo "Error: Response does not contain candidates."
-    echo "Possible causes: Wrong API Key, invalid Model, or rate limit reached."
-    echo "See the exact error in the debug file."
-    TEXT_RESPONSE=""
-    FILES=""
+    exit 1
 fi
 
-# Displays the text
+TEXT_RESPONSE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.text) | .text')
+FILES=$(echo "$RESPONSE" | jq -c '.candidates[0].content.parts[] | select(.inlineData)')
+
 if [ -n "$TEXT_RESPONSE" ]; then
     echo "$TEXT_RESPONSE"
 fi
 
-# Processes files (Image generation or other binary data)
 if [ -n "$FILES" ]; then
     while IFS= read -r FILE_DATA; do
-        MIME_TYPE=$(echo "$FILE_DATA" | jq -r '.mimeType')
-        BASE64_DATA=$(echo "$FILE_DATA" | jq -r '.data')
-        EXT=$(echo "$MIME_TYPE" | sed 's/.*\///') # Extracts extension from MIME type
-        OUTPUT_FILE="$OUTPUT_DIR/output_$(date +%s).$EXT" # Generates unique file name
-        echo "$BASE64_DATA" | base64 -d > "$OUTPUT_FILE"
-        echo "File saved: $OUTPUT_FILE (MIME: $MIME_TYPE)"
+        MIME_TYPE=$(echo "$FILE_DATA" | jq -r '.inlineData.mimeType')
+        BASE64_DATA=$(echo "$FILE_DATA" | jq -r '.inlineData.data')
+        EXT="${MIME_TYPE#*/}"
+        OUTFILE="$OUTPUT_DIR/output_$(date +%s).$EXT"
+        echo "$BASE64_DATA" | base64 -d > "$OUTFILE"
+        echo "File saved: $OUTFILE"
     done <<< "$FILES"
 fi
 
-# Saves the updated history
+# ---------------------------------------------------------
+# Save history
+# ---------------------------------------------------------
 if ! $NEW_CONVERSATION; then
-    # Ensures that even if the response is empty, the conversation is logged.
     CLEAN_TEXT_RESPONSE=$(echo "$TEXT_RESPONSE" | jq -Rs .)
-    echo "$(echo "$HISTORY" | jq --arg text "$TEXT" --argjson response "$CLEAN_TEXT_RESPONSE" '. + [{"role": "user", "parts": [{"text": $text}]}, {"role": "model", "parts": [{"text": $response}]}]')" > "$HISTORY_FILE"
+    NEW_HISTORY=$(echo "$HISTORY" | jq \
+        --arg text "$TEXT" \
+        --argjson resp "$CLEAN_TEXT_RESPONSE" \
+        '. + [{"role":"user","parts":[{"text":$text}]},{"role":"model","parts":[{"text":$resp}]}]')
+    echo "$NEW_HISTORY" > "$HISTORY_FILE"
 fi
 
-# Logging
-if $ENABLE_LOG; then
-    # Removes new lines from the response for a clean log entry
-    CLEAN_LOG_RESPONSE=$(echo "$TEXT_RESPONSE" | tr -d '\n\r')
-    echo "$(date): $TEXT -> $CLEAN_LOG_RESPONSE" >> "$LOG_FILE"
+# ---------------------------------------------------------
+# Automatic logging
+# ---------------------------------------------------------
+mkdir -p "$OUTPUT_DIR"
+
+LOG_ENTRY_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+CLEAN_LOG_RESPONSE=$(echo "$TEXT_RESPONSE" | tr -d '\n\r')
+
+echo "$LOG_ENTRY_TIME | prompt: \"$TEXT\" | response: \"$CLEAN_LOG_RESPONSE\"" >> "$LOG_FILE"
+
+if [ -n "$FILES" ]; then
+    echo "$LOG_ENTRY_TIME | files returned: yes" >> "$LOG_FILE"
+else
+    echo "$LOG_ENTRY_TIME | files returned: no" >> "$LOG_FILE"
 fi
