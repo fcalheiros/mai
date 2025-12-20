@@ -11,19 +11,26 @@ CONTENT_TYPE="application/json"
 
 CONFIG_DIR="$HOME/.local/.mai"
 CONFIG_FILE="$CONFIG_DIR/mai.conf"
-HISTORY_FILE="$CONFIG_DIR/history.json"
+HISTORY_FILE="$CONFIG_DIR/history.ndjson"
+HISTORY_GZ="$CONFIG_DIR/history.ndjson.gz"
 LOG_FILE="$OUTPUT_DIR/mai.log"
+MAX_HISTORY_SIZE=$((10 * 1024 * 1024))  # max size before compression
+MAX_MESSAGES=20                          # last messages sent to the model
 
-# Check dependencies
+# Check required dependencies
 check_dependencies() {
     if ! command -v jq &> /dev/null || ! command -v curl &> /dev/null; then
         echo "Error: jq and curl are required."
         exit 1
     fi
+    if ! command -v gzip &> /dev/null; then
+        echo "Error: gzip is required."
+        exit 1
+    fi
 }
 check_dependencies
 
-# Create config
+# Create initial config file
 create_config() {
     mkdir -p "$CONFIG_DIR"
     echo "Enter your Gemini/Gemma API key:"
@@ -31,209 +38,20 @@ create_config() {
     echo "Enter the model (e.g., gemini-2.5-flash-lite, gemma-3-27b-it):"
     read MODEL
     URL="https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent"
-    echo "API_KEY=$API_KEY" > "$CONFIG_FILE"
-    echo "URL=$URL" >> "$CONFIG_FILE"
-    echo "OUTPUT_DIR=$HOME/maiout" >> "$CONFIG_FILE"
+
+    {
+        echo "API_KEY=$API_KEY"
+        echo "URL=$URL"
+        echo "OUTPUT_DIR=$HOME/maiout"
+    } > "$CONFIG_FILE"
+
     echo "Config created at $CONFIG_FILE"
 }
 
-# Load config
+# Load config values
 read_config() {
     while IFS='=' read -r key value; do
         case "$key" in
             API_KEY) API_KEY="$value" ;;
             URL) URL="$value" ;;
-            OUTPUT_DIR) OUTPUT_DIR="$value" ;;
-        esac
-    done < "$CONFIG_FILE"
-}
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    create_config
-fi
-
-read_config
-
-if [ -z "$API_KEY" ]; then
-    echo "Error: API_KEY missing in config."
-    exit 1
-fi
-
-# Help menu
-show_help() {
-    echo "Usage: $0 \"text\" [file] [options]"
-    echo "Options:"
-    echo "  --debug         Save debug info"
-    echo "  --new, -n       Start new conversation"
-    echo "  --help, -h      Show help"
-    echo "  --version       Show version"
-    echo "  --config        Edit config"
-    echo "  --list-models   List available models"
-    echo "  --logs          Show logs"
-    exit 0
-}
-
-edit_config() {
-    ${EDITOR:-nano} "$CONFIG_FILE"
-}
-
-# Parse arguments
-DEBUG_MODE=false
-NEW_CONVERSATION=false
-SHOW_LOGS=false
-LIST_MODELS=false
-ARGS=()
-
-for arg in "$@"; do
-    case "$arg" in
-        --debug) DEBUG_MODE=true ;;
-        --new|-n) NEW_CONVERSATION=true ;;
-        --help|-h) show_help ;;
-        --version) echo "mai version: $VERSION"; exit 0 ;;
-        --config) edit_config; exit 0 ;;
-        --list-models) LIST_MODELS=true ;;
-        --logs) SHOW_LOGS=true ;;
-        *) ARGS+=("$arg") ;;
-    esac
-done
-
-# List models
-list_models() {
-    echo "Fetching models..."
-    curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}" \
-        | jq -r '.models[].name | sub("^models/"; "")'
-    exit 0
-}
-
-if $LIST_MODELS; then
-    list_models
-fi
-
-# Show logs
-show_logs() {
-    if [ ! -f "$LOG_FILE" ]; then
-        echo "No logs found."
-        exit 0
-    fi
-    cat "$LOG_FILE"
-    exit 0
-}
-
-if $SHOW_LOGS; then
-    show_logs
-fi
-
-# Reset conversation
-if $NEW_CONVERSATION; then
-    echo "[]" > "$HISTORY_FILE"
-    echo "New conversation started."
-fi
-
-if [ -z "${ARGS[0]}" ]; then
-    show_help
-fi
-
-TEXT="${ARGS[0]}"
-FILE="${ARGS[1]}"
-
-mkdir -p "$OUTPUT_DIR"
-
-# Load history
-read_history() {
-    if [ -f "$HISTORY_FILE" ] && ! $NEW_CONVERSATION; then
-        cat "$HISTORY_FILE"
-    else
-        echo "[]"
-    fi
-}
-
-HISTORY=$(read_history)
-
-# Build JSON payload
-if [ -n "$FILE" ]; then
-    MIME_TYPE=$(file -b --mime-type "$FILE")
-    BASE64_DATA=$(base64 -w 0 "$FILE")
-
-    CONTENTS=$(jq -n \
-        --arg text "$TEXT" \
-        --arg mime "$MIME_TYPE" \
-        --arg data "$BASE64_DATA" \
-        --argjson history "$HISTORY" \
-        '$history + [{"role":"user","parts":[{"text":$text},{"inlineData":{"mimeType":$mime,"data":$data}}]}]')
-else
-    CONTENTS=$(jq -n \
-        --arg text "$TEXT" \
-        --argjson history "$HISTORY" \
-        '$history + [{"role":"user","parts":[{"text":$text}]}]')
-fi
-
-DATA=$(jq -n --argjson c "$CONTENTS" '{contents: $c}')
-
-# Send request
-RESPONSE=$(echo "$DATA" | curl -s -X POST \
-  -H "Content-Type: ${CONTENT_TYPE}" \
-  -d @- \
-  "${URL}?key=${API_KEY}")
-
-# Debug output
-if $DEBUG_MODE; then
-    echo "--- Request ---" > "$OUTPUT_DIR/debug.log"
-    echo "$DATA" >> "$OUTPUT_DIR/debug.log"
-    echo "--- Response ---" >> "$OUTPUT_DIR/debug.log"
-    echo "$RESPONSE" >> "$OUTPUT_DIR/debug.log"
-fi
-
-# Validate response
-if ! echo "$RESPONSE" | jq -e '.candidates' >/dev/null; then
-    echo "Error: Response does not contain candidates."
-    exit 1
-fi
-
-# Extract text response
-TEXT_RESPONSE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.text) | .text')
-
-# Extract files
-FILES=$(echo "$RESPONSE" | jq -c '.candidates[0].content.parts[] | select(.inlineData)')
-
-# Print text
-if [ -n "$TEXT_RESPONSE" ]; then
-    echo "$TEXT_RESPONSE"
-fi
-
-# Save returned files
-if [ -n "$FILES" ]; then
-    while IFS= read -r FILE_DATA; do
-        MIME_TYPE=$(echo "$FILE_DATA" | jq -r '.inlineData.mimeType')
-        BASE64_DATA=$(echo "$FILE_DATA" | jq -r '.inlineData.data')
-        EXT="${MIME_TYPE#*/}"
-        OUTFILE="$OUTPUT_DIR/output_$(date +%s).$EXT"
-        echo "$BASE64_DATA" | base64 -d > "$OUTFILE"
-        echo "File saved: $OUTFILE"
-    done <<< "$FILES"
-fi
-
-# Save history
-CLEAN_TEXT_RESPONSE=$(echo "$TEXT_RESPONSE" | jq -Rs .)
-
-NEW_HISTORY=$(jq -n \
-    --arg text "$TEXT" \
-    --arg response "$CLEAN_TEXT_RESPONSE" \
-    --argjson history "$HISTORY" \
-    '$history + [
-        {"role":"user","parts":[{"text":$text}]},
-        {"role":"model","parts":[{"text":$response}]}
-    ]')
-
-echo "$NEW_HISTORY" > "$HISTORY_FILE"
-
-# Log request
-LOG_ENTRY_TIME=$(date +"%Y-%m-%d %H:%M:%S")
-CLEAN_LOG_RESPONSE=$(echo "$TEXT_RESPONSE" | tr -d '\n\r')
-
-echo "$LOG_ENTRY_TIME | prompt: \"$TEXT\" | response: \"$CLEAN_LOG_RESPONSE\"" >> "$LOG_FILE"
-
-if [ -n "$FILES" ]; then
-    echo "$LOG_ENTRY_TIME | files returned: yes" >> "$LOG_FILE"
-else
-    echo "$LOG_ENTRY_TIME | files returned: no" >> "$LOG_FILE"
-fi
+           
