@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# mai.sh - MyAI CLI for Gemini/Gemma API
+# mai - MyAI CLI for Gemini/Gemma API
 # Version 0.3
 
 VERSION="0.3"
@@ -54,4 +54,259 @@ read_config() {
         case "$key" in
             API_KEY) API_KEY="$value" ;;
             URL) URL="$value" ;;
-           
+            OUTPUT_DIR) OUTPUT_DIR="$value" ;;
+        esac
+    done < "$CONFIG_FILE"
+}
+
+# Create config if missing
+[ -f "$CONFIG_FILE" ] || create_config
+read_config
+
+# Stop if API key missing
+if [ -z "$API_KEY" ]; then
+    echo "Error: API_KEY missing in config."
+    exit 1
+fi
+
+# Show help menu
+show_help() {
+    echo "Usage: $0 \"text\" [file] [options]"
+    echo "Options:"
+    echo "  --debug         Save debug info"
+    echo "  --new, -n       Start new conversation"
+    echo "  --help, -h      Show help"
+    echo "  --version       Show version"
+    echo "  --config        Edit config"
+    echo "  --list-models   List available models"
+    echo "  --logs          Show logs"
+    exit 0
+}
+
+# Open config in editor
+edit_config() {
+    ${EDITOR:-nano} "$CONFIG_FILE"
+}
+
+DEBUG_MODE=false
+NEW_CONVERSATION=false
+SHOW_LOGS=false
+LIST_MODELS=false
+ARGS=()
+
+# Parse CLI arguments
+for arg in "$@"; do
+    case "$arg" in
+        --debug) DEBUG_MODE=true ;;
+        --new|-n) NEW_CONVERSATION=true ;;
+        --help|-h) show_help ;;
+        --version) echo "mai version: $VERSION"; exit 0 ;;
+        --config) edit_config; exit 0 ;;
+        --list-models) LIST_MODELS=true ;;
+        --logs) SHOW_LOGS=true ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+# Fetch available models
+list_models() {
+    echo "Fetching models..."
+    curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}" \
+        | jq -r '.models[].name | sub("^models/"; "")'
+    exit 0
+}
+
+if $LIST_MODELS; then
+    list_models
+fi
+
+# Show log file
+show_logs() {
+    if [ ! -f "$LOG_FILE" ]; then
+        echo "No logs found."
+        exit 0
+    fi
+    cat "$LOG_FILE"
+    exit 0
+}
+
+if $SHOW_LOGS; then
+    show_logs
+fi
+
+mkdir -p "$OUTPUT_DIR" "$CONFIG_DIR"
+
+# Reset conversation history
+if $NEW_CONVERSATION; then
+    : > "$HISTORY_FILE"
+    echo "New conversation started."
+fi
+
+# Require text input
+if [ -z "${ARGS[0]}" ]; then
+    show_help
+fi
+
+TEXT="${ARGS[0]}"
+FILE="${ARGS[1]}"
+
+# Escape text for JSON
+escape_json() {
+    printf '%s' "$1" | jq -Rs .
+}
+
+# Stream full history (gz + plain)
+stream_full_history() {
+    if [ -f "$HISTORY_GZ" ]; then
+        gzip -cd "$HISTORY_GZ"
+    fi
+    if [ -f "$HISTORY_FILE" ]; then
+        cat "$HISTORY_FILE"
+    fi
+}
+
+# Append user message to history
+append_user_message() {
+    local text_json mime data
+    text_json=$(escape_json "$TEXT")
+
+    if [ -n "$FILE" ]; then
+        if [ ! -f "$FILE" ]; then
+            echo "Error: file '$FILE' not found."
+            exit 1
+        fi
+        mime=$(file -b --mime-type "$FILE")
+        data=$(base64 -w 0 "$FILE")
+        echo "{\"role\":\"user\",\"text\":$text_json,\"mime\":\"$mime\",\"data\":\"$data\"}" >> "$HISTORY_FILE"
+    else
+        echo "{\"role\":\"user\",\"text\":$text_json}" >> "$HISTORY_FILE"
+    fi
+}
+
+# Build JSON payload for the model
+build_contents_json() {
+    local tmp_history
+    tmp_history=$(mktemp)
+
+    stream_full_history | tail -n "$MAX_MESSAGES" > "$tmp_history"
+
+    echo "["
+    local first=true
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+
+        local role text_json mime data
+        role=$(echo "$line" | jq -r '.role')
+        text_json=$(echo "$line" | jq '.text')
+        mime=$(echo "$line" | jq -r '.mime // empty')
+        data=$(echo "$line" | jq -r '.data // empty')
+
+        $first && first=false || echo ","
+
+        if [ -n "$data" ]; then
+            echo "{\"role\":\"$role\",\"parts\":[{\"text\":$text_json},{\"inlineData\":{\"mimeType\":\"$mime\",\"data\":\"$data\"}}]}"
+        else
+            echo "{\"role\":\"$role\",\"parts\":[{\"text\":$text_json}]}"
+        fi
+    done < "$tmp_history"
+    echo "]"
+
+    rm -f "$tmp_history"
+}
+
+# Compress history when too large
+compress_history_if_needed() {
+    if [ ! -f "$HISTORY_FILE" ]; then
+        return
+    fi
+
+    local size
+    size=$(stat -c%s "$HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$size" -lt "$MAX_HISTORY_SIZE" ]; then
+        return
+    fi
+
+    if [ -f "$HISTORY_GZ" ]; then
+        gzip -cd "$HISTORY_GZ" "$HISTORY_FILE" | gzip > "${HISTORY_GZ}.tmp"
+        mv "${HISTORY_GZ}.tmp" "$HISTORY_GZ"
+        rm -f "$HISTORY_FILE"
+    else
+        gzip -c "$HISTORY_FILE" > "$HISTORY_GZ"
+        rm -f "$HISTORY_FILE"
+    fi
+}
+
+append_user_message
+compress_history_if_needed
+
+CONTENTS=$(build_contents_json)
+
+# Build request body
+DATA=$(cat <<EOF
+{"contents": $CONTENTS}
+EOF
+)
+
+# Send request to model
+RESPONSE=$(echo "$DATA" | curl -s -X POST \
+  -H "Content-Type: ${CONTENT_TYPE}" \
+  -d @- \
+  "${URL}?key=${API_KEY}")
+
+# Save debug info
+if $DEBUG_MODE; then
+    {
+        echo "--- Request ---"
+        echo "$DATA"
+        echo "--- Response ---"
+        echo "$RESPONSE"
+    } > "$OUTPUT_DIR/debug.log"
+fi
+
+# Validate response
+if ! echo "$RESPONSE" | jq -e '.candidates' >/dev/null 2>&1; then
+    echo "Error: Response does not contain candidates."
+    echo "$RESPONSE"
+    exit 1
+fi
+
+# Extract text response
+TEXT_RESPONSE=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[] | select(.text) | .text')
+
+# Extract returned files
+FILES=$(echo "$RESPONSE" | jq -c '.candidates[0].content.parts[] | select(.inlineData)')
+
+# Print model output
+if [ -n "$TEXT_RESPONSE" ] && [ "$TEXT_RESPONSE" != "null" ]; then
+    echo "$TEXT_RESPONSE"
+fi
+
+# Save model message to history
+ESCAPED_MODEL_TEXT=$(escape_json "$TEXT_RESPONSE")
+echo "{\"role\":\"model\",\"text\":$ESCAPED_MODEL_TEXT}" >> "$HISTORY_FILE"
+
+compress_history_if_needed
+
+# Save returned files
+if [ -n "$FILES" ]; then
+    while IFS= read -r file_data; do
+        mime=$(echo "$file_data" | jq -r '.inlineData.mimeType')
+        data=$(echo "$file_data" | jq -r '.inlineData.data')
+        ext="${mime#*/}"
+        outfile="$OUTPUT_DIR/output_$(date +%s).$ext"
+        echo "$data" | base64 -d > "$outfile"
+        echo "File saved: $outfile"
+    done <<< "$FILES"
+fi
+
+# Write log entry
+LOG_ENTRY_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+CLEAN_LOG_RESPONSE=$(echo "$TEXT_RESPONSE" | tr -d '\n\r')
+
+echo "$LOG_ENTRY_TIME | prompt: \"$TEXT\" | response: \"$CLEAN_LOG_RESPONSE\"" >> "$LOG_FILE"
+
+if [ -n "$FILES" ]; then
+    echo "$LOG_ENTRY_TIME | files returned: yes" >> "$LOG_FILE"
+else
+    echo "$LOG_ENTRY_TIME | files returned: no" >> "$LOG_FILE"
+fi
