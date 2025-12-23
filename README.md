@@ -1,99 +1,131 @@
-# mai - Command-Line Interface for Gemini API
+# mai - Command-Line Interface for Gemini/Gemma API
 
-`mai` is a shell script that allows you to interact with the Google Gemini API directly from the command line. It supports sending text and files (like images) and receiving text and files as a response.
+`mai` is a shell script that allows you to interact with the Google Gemini and Gemma APIs directly from the command line. It supports sending text and files (such as images) and receiving both text and files in the response. The script also maintains conversation history, compresses it automatically, and logs all interactions.
 
 ## Prerequisites
 
 Before using `mai`, ensure you have the following utilities installed on your system:
 
-* **jq**: For processing the API's JSON response.
-* **base64**: For encoding and decoding files.
-* **file**: For determining the MIME type of files.
-* **curl**: For making HTTP requests.
+- jq — For processing JSON responses  
+- curl — For making HTTP requests  
+- file — For detecting MIME types of attached files  
+- base64 — For encoding and decoding file data  
+- gzip — For compressing conversation history  
 
-### Installation
+These tools are available by default on most Linux distributions and macOS.
 
-#### Linux (Ubuntu/Debian)
+## Installation
 
-1.  Open a terminal.
-2.  Run the following commands:
+### Linux (Ubuntu/Debian)
 
-    ```bash
-    sudo apt-get update
-    sudo apt-get install jq base64 file curl
-    ```
+sudo apt-get update  
+sudo apt-get install jq curl file coreutils gzip
 
-#### Linux (Fedora/CentOS)
+### Linux (Fedora/CentOS)
 
-1.  Open a terminal.
-2.  Run the following commands:
+sudo dnf install jq curl file coreutils gzip
 
-    ```bash
-    sudo dnf install jq coreutils file curl
-    ```
+### macOS (Homebrew)
 
-#### macOS (Homebrew)
+brew install jq
 
-1.  If you don't have Homebrew installed, install it following the instructions at [brew.sh](https://brew.sh/).
-2.  Open a terminal.
-3.  Run the following command:
-
-    ```bash
-    brew install jq
-    ```
-
-    (base64 and file are already installed on macOS)
+(macOS already includes curl, file, base64, and gzip)
 
 ## Obtaining the API Key
 
-To use the Gemini API, you'll need a Google Cloud API key. Follow these steps to obtain it:
+To use the Gemini/Gemma API, you need a Google Cloud API key:
 
-1.  Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2.  Create a new project or select an existing one.
-3.  Navigate to "APIs & Services" > "Credentials".
-4.  Click "Create credentials" > "API key".
-5.  Copy the generated API key.
+1. Visit the Google Cloud Console.  
+2. Create or select a project.  
+3. Go to “APIs & Services → Credentials”.  
+4. Click “Create credentials → API key”.  
+5. Copy the generated key.
 
 ## Usage
 
-1.  Save the script from the `mai` file.
-2.  Make the script executable: `chmod +x mai`.
-3.  Run the script for the first time:
+1. Save the script from the `mai` file.  
+2. Make it executable:
 
-    ```bash
-    ./mai
-    ```
+chmod +x mai
 
-    The script will prompt you for your API key and create the `mai.conf` configuration file.
+3. Run it for the first time:
 
-4.  You can replace the API key and URL by editing the `mai.conf` configuration file located at `$HOME/.local/.mai`.
+./mai
 
-5.  Run the script with the text and, optionally, the file as arguments:
+The script will ask for your API key, ask for the model name (e.g., gemini-2.5-flash-lite, gemma-3-27b-it), and create the configuration file at:
 
-    ```bash
-    ./mai "Describe this image:" image.jpg
-    ```
+$HOME/.local/.mai/mai.conf
 
-    Or, with text only:
+4. You may edit the configuration later using:
 
-    ```bash
-    ./mai "Write a short poem about nature."
-    ```
+./mai --config
 
-6.  The API response will be displayed in the terminal, and any received files will be saved in the `~/maiout` folder.
+5. Run the script with text and optionally a file:
 
-### Options
+./mai "Describe this image:" photo.jpg
 
-* `--version`: Displays the script version.
-* `--debug`: Saves the complete request and API response to `~/maiout/debug.log`.
-* `--config`: Opens the configuration file for editing.
-* `--log`: Enables logging of API requests and responses to `~/maiout/mai.log`.
+Or text only:
+
+./mai "Write a short poem about nature."
+
+Responses are printed to the terminal. Any files returned by the model are saved in:
+
+~/maiout/
+
+## Options
+
+The script supports the following options:
+
+--version  
+Shows the script version.
+
+--debug  
+Saves the full request and response to ~/maiout/debug.log.
+
+--config  
+Opens the configuration file in your default editor.
+
+--list-models  
+Fetches and displays all available models from the API.
+
+--logs  
+Shows the log file (~/maiout/mai.log).
+
+--new, -n  
+Starts a new conversation (clears history).
+
+--help, -h  
+Displays the help menu.
+
+## Conversation History
+
+`mai` stores conversation history in:
+
+~/.local/.mai/history.ndjson
+
+When the file reaches 10 MB, it is automatically compressed into:
+
+history.ndjson.gz
+
+The script always sends only the last 20 messages to the model.
+
+## Logging
+
+All interactions are logged to:
+
+~/maiout/mai.log
+
+Each entry includes:
+
+- timestamp  
+- prompt  
+- model response  
+- whether files were returned  
 
 ## Script `mai`
 
-The `mai` script is available in the [mai](mai) file.
+The `mai` script is available in the repository under the file named `mai`.
 
 ## Contributing
 
-Contributions are welcome! Feel free to submit pull requests or open issues.
-
+Contributions are welcome. Feel free to open issues or submit pull requests.
