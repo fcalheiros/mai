@@ -1,4 +1,4 @@
-# mai - Command-Line Interface for Gemini/Gemma API
+# mai - My AI - Command-Line Interface for Gemini/Gemma API
 
 `mai` is a shell script that allows you to interact with the Google Gemini and Gemma APIs directly from the command line. It supports sending text and files (such as images) and receiving both text and files in the response. The script also maintains conversation history, compresses it automatically, and logs all interactions.
 
