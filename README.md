@@ -18,16 +18,22 @@ These tools are available by default on most Linux distributions and macOS.
 
 ### Linux (Ubuntu/Debian)
 
-sudo apt-get update  
+```bash
+sudo apt-get update
 sudo apt-get install jq curl file coreutils gzip
+```
 
 ### Linux (Fedora/CentOS)
 
+```bash
 sudo dnf install jq curl file coreutils gzip
+```
 
 ### macOS (Homebrew)
 
+```bash
 brew install jq
+```
 
 (macOS already includes curl, file, base64, and gzip)
 
@@ -46,66 +52,84 @@ To use the Gemini/Gemma API, you need a Google Cloud API key:
 1. Save the script from the `mai` file.  
 2. Make it executable:
 
+```bash
 chmod +x mai
+```
 
 3. Run it for the first time:
 
+```bash
 ./mai
+```
 
 The script will ask for your API key, ask for the model name (e.g., gemini-2.5-flash-lite, gemma-3-27b-it), and create the configuration file at:
 
+```bash
 $HOME/.local/.mai/mai.conf
+```
 
 4. You may edit the configuration later using:
 
+```bash
 ./mai --config
+```
 
 5. Run the script with text and optionally a file:
 
+```bash
 ./mai "Describe this image:" photo.jpg
+```
 
 Or text only:
 
+```bash
 ./mai "Write a short poem about nature."
+```
 
 Responses are printed to the terminal. Any files returned by the model are saved in:
 
+```bash
 ~/maiout/
+```
 
 ## Options
 
 The script supports the following options:
 
---version  
-Shows the script version.
+- `--version`  
+  Shows the script version.
 
---debug  
-Saves the full request and response to ~/maiout/debug.log.
+- `--debug`  
+  Saves the full request and response to `~/maiout/debug.log`.
 
---config  
-Opens the configuration file in your default editor.
+- `--config`  
+  Opens the configuration file in your default editor.
 
---list-models  
-Fetches and displays all available models from the API.
+- `--list-models`  
+  Fetches and displays all available models from the API.
 
---logs  
-Shows the log file (~/maiout/mai.log).
+- `--logs`  
+  Shows the log file (`~/maiout/mai.log`).
 
---new, -n  
-Starts a new conversation (clears history).
+- `--new`, `-n`  
+  Starts a new conversation (clears history).
 
---help, -h  
-Displays the help menu.
+- `--help`, `-h`  
+  Displays the help menu.
 
 ## Conversation History
 
 `mai` stores conversation history in:
 
+```bash
 ~/.local/.mai/history.ndjson
+```
 
 When the file reaches 10 MB, it is automatically compressed into:
 
+```bash
 history.ndjson.gz
+```
 
 The script always sends only the last 20 messages to the model.
 
@@ -113,7 +137,9 @@ The script always sends only the last 20 messages to the model.
 
 All interactions are logged to:
 
+```bash
 ~/maiout/mai.log
+```
 
 Each entry includes:
 
